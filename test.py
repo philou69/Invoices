@@ -4,25 +4,31 @@ import subprocess
 import re
 import sys
 import os
-import csv
-from collections import OrderedDict
+import mysql.connector
+import datetime
 
 DEVNULL = open(os.devnull, 'wb')
 
 total_regexp = re.compile("TOTAL TTC ([0-9.]+) \\u20ac")
 description_regexp = re.compile("(Serveur .+ 1 mois)", re.DOTALL)
+periode_regexp = re.compile("Date : (.+)")
 
-test_file = "data/"
+french_months = ['Janvier', 'Fevrier', 'Mars', 'Avril', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre']
 
-
+path_tmp = "PDF/tmp/"
+path_storage = "PDF/Invoices/"
 def read_file(path):
     """
     Open the PDF file and return its textual content
     """
 
-    return subprocess.check_output("pdftotext -raw \"%s\" -" % path,
-    shell=True, stderr=DEVNULL).decode('utf-8')
+    return subprocess.check_output("pdftotext -raw \"%s%s\" -" % (path_tmp, path), shell=True, stderr=DEVNULL).decode('utf-8')
 
+def move_pdf(file):
+    """
+    Move the pdf in the rigth folder
+    """
+    os.rename("%s%s" % (path_tmp, file), "%s%s" %(path_storage, file))
 
 def parse_invoices(invoices):
     """
@@ -32,31 +38,57 @@ def parse_invoices(invoices):
     lines = []
 
     for invoice in invoices:
-        content = read_file(invoice)
-        print(content)
+        if not os.path.exists("%s%s" %(path_storage, invoice)):
+            content = read_file(invoice)
 
-        # READ TOTAL
-        lines.append({
-            "total": re.search(total_regexp, content).group(1)
-        })
+            # READ DESCRIPTION
+            lines.append(re.search(description_regexp, content).group(0))
 
-        # READ DESCRIPTION
-        lines.append({
-        	"description": re.search(description_regexp, content).group(0)
-        })
+            # READ TOTAL
+            lines.append(re.search(total_regexp, content).group(1))
+
+            # READ PERIODE
+            date_string = re.search(periode_regexp, content).group(1)
+            for index, month in enumerate(french_months) :
+                if re.search(month, date_string):
+                    date_string = re.sub(month, str(index), date_string)
+
+            date = datetime.datetime.strptime(date_string, "%d %m %Y").date()
+            
+            lines.append(date)
+            move_pdf(invoice)
+
+            insert_in_database(lines)
 
     return lines
 
-def write_in_file(lines):
-	"""
-	Write data in csv
-	"""
-	print(lines[0]['total'])
-	if re.search('Serveur', lines[1]["description"]) :
-		global test_file
-		test_file += "server.csv"
+def insert_in_database(lines):
+    """
+    Write data in datbase
+    """
+    db = connect_mysql()
+    cursor = db.cursor()
 
-	print(test_file)
+    add_invoice = ("INSERT INTO invoice"
+        "(designation, price, periode)"
+        "VALUES(%s, %s, %s)"
+        )
+    cursor.execute(add_invoice, lines)
+    emp_no = cursor.lastrowid
+
+    db.commit()
+    cursor.close()
+    db.close()
+
+
+def connect_mysql():
+    """
+    Connection to database
+    """
+    db = mysql.connector.connect(user='root', password='Clophil090814@', host="127.0.0.1", database="Invoice")
+
+    return db
+
 
 if __name__ == "__main__":
     invoices = sys.argv[1:]
@@ -64,14 +96,8 @@ if __name__ == "__main__":
         raise Exception("No file specified")
 
     lines = parse_invoices(invoices)
-    write_in_file(lines)
-    print(lines)
 
-    # print lines
-
-    # with open('liste_factures.csv', 'wb') as csvfile:
-    #     spamwriter = csv.writer(csvfile, delimiter=',',
-    #                             quotechlar='"', quoting=csv.QUOTE_MINIMAL)
-    #     spamwriter.writerow(lines[0].keys())
-    #     for line in lines:
-    #         spamwriter.writerow(line.values())
+    if not lines:
+        print("Les factures ont déjà été parser")
+    else:
+        insert_in_database(lines)
