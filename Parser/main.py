@@ -39,12 +39,13 @@ def parse_invoices(invoices):
         if not os.path.exists("%s%s" %(path_storage, invoice)):
 
             content = read_file(invoice)
-
-        
-            bill = Serveur.parse_invoice(content)
+            print(content)
+            if re.search("OVH", content):
+                bill = Serveur.parse_invoice(content)
             
             if bill:
                 lines.append(bill)
+                move_pdf(invoice)
 
     return lines
 
@@ -86,4 +87,5 @@ if __name__ == "__main__":
         print("Les factures ont déjà été parser")
     else:
         insert_in_database(lines)
+
         print("Facture(s) parser avec succès")
