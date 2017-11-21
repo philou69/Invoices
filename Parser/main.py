@@ -5,13 +5,11 @@ import re
 import sys
 import os
 import mysql.connector
-import datetime
+from Invoices import Serveur
 
 DEVNULL = open(os.devnull, 'wb')
 
-total_regexp = re.compile("TOTAL TTC ([0-9.]+) \\u20ac")
-description_regexp = re.compile("(Serveur .+ 1 mois)", re.DOTALL)
-periode_regexp = re.compile("Date : (.+)")
+
 
 french_months = ['Janvier', 'Fevrier', 'Mars', 'Avril', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre']
 
@@ -39,26 +37,14 @@ def parse_invoices(invoices):
 
     for invoice in invoices:
         if not os.path.exists("%s%s" %(path_storage, invoice)):
+
             content = read_file(invoice)
 
-            # READ DESCRIPTION
-            lines.append(re.search(description_regexp, content).group(0))
-
-            # READ TOTAL
-            lines.append(re.search(total_regexp, content).group(1))
-
-            # READ PERIODE
-            date_string = re.search(periode_regexp, content).group(1)
-            for index, month in enumerate(french_months) :
-                if re.search(month, date_string):
-                    date_string = re.sub(month, str(index), date_string)
-
-            date = datetime.datetime.strptime(date_string, "%d %m %Y").date()
+        
+            bill = Serveur.parse_invoice(content)
             
-            lines.append(date)
-            move_pdf(invoice)
-
-            insert_in_database(lines)
+            if bill:
+                lines.append(bill)
 
     return lines
 
@@ -68,14 +54,13 @@ def insert_in_database(lines):
     """
     db = connect_mysql()
     cursor = db.cursor()
-
     add_invoice = ("INSERT INTO invoice"
-        "(designation, price, periode)"
-        "VALUES(%s, %s, %s)"
-        )
-    cursor.execute(add_invoice, lines)
-    emp_no = cursor.lastrowid
+            "(designation, price, periode)"
+            "VALUES (%(designation)s, %(price)s, %(periode)s)"
+            )
 
+    cursor.executemany(add_invoice, lines)
+    
     db.commit()
     cursor.close()
     db.close()
@@ -97,7 +82,8 @@ if __name__ == "__main__":
 
     lines = parse_invoices(invoices)
 
-    if not lines:
+    if len(lines) == 0:
         print("Les factures ont déjà été parser")
     else:
         insert_in_database(lines)
+        print("Facture(s) parser avec succès")
